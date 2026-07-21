@@ -1,0 +1,358 @@
+:root {
+  --bg: #f8f9fa;
+  --surface: #ffffff;
+  --text: #212529;
+  --text-muted: #6c757d;
+  --border: #dee2e6;
+  --accent: #1c7ed6;
+  color-scheme: light dark;
+
+  /* Categorical ASN ring colors -- validated 8-hue set, see docs/palette notes. */
+  --asn-0: #2a78d6;
+  --asn-1: #008300;
+  --asn-2: #e87ba4;
+  --asn-3: #eda100;
+  --asn-4: #1baf7a;
+  --asn-5: #eb6834;
+  --asn-6: #4a3aa7;
+  --asn-7: #e34948;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16181d;
+    --surface: #1f2229;
+    --text: #e9ecef;
+    --text-muted: #adb5bd;
+    --border: #343a40;
+    --tree-label-color: #e9ecef;
+
+    --asn-0: #3987e5;
+    --asn-1: #008300;
+    --asn-2: #d55181;
+    --asn-3: #c98500;
+    --asn-4: #199e70;
+    --asn-5: #d95926;
+    --asn-6: #9085e9;
+    --asn-7: #e66767;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.app-header h1 {
+  font-size: 16px;
+  margin: 0;
+}
+
+.header-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.ws-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.ws-up {
+  background: #2f9e44;
+}
+.ws-down {
+  background: #e03131;
+}
+
+.stats-summary {
+  margin-left: 8px;
+}
+
+.admin-link {
+  margin-left: auto;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.app-main {
+  position: relative;
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+}
+
+.tree-canvas-wrap {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+.tree-toolbar {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 2;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.tree-toolbar input {
+  padding: 4px 6px;
+}
+
+.tree-count {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.tree-path-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.tree-path-toggle input {
+  padding: 0;
+}
+
+.tree-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  cursor: grab;
+}
+
+.tree-svg:active {
+  cursor: grabbing;
+}
+
+.tree-link {
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 1.5px;
+}
+
+.tree-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-muted);
+}
+
+.detail-panel {
+  width: 340px;
+  flex-shrink: 0;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  padding: 16px;
+  overflow-y: auto;
+  position: relative;
+}
+
+.detail-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  border: none;
+  background: none;
+  font-size: 20px;
+  cursor: pointer;
+  color: var(--text-muted);
+}
+
+.severity-badge {
+  display: inline-block;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 10px;
+  margin-bottom: 12px;
+}
+
+.detail-fields {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  font-size: 13px;
+}
+
+.detail-fields dt {
+  color: var(--text-muted);
+}
+
+.detail-fields dd {
+  margin: 0;
+}
+
+.history-charts h4 {
+  margin: 12px 0 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.history-empty {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+/* --- admin --- */
+
+.login-page {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 280px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 24px;
+}
+
+.login-form input,
+.login-form button {
+  padding: 8px;
+}
+
+.error-text {
+  color: #e03131;
+  font-size: 13px;
+  margin: 0;
+}
+
+.admin-page {
+  padding: 16px 24px;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.admin-nav {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.admin-nav a {
+  color: var(--text);
+  text-decoration: none;
+}
+
+.admin-logout {
+  margin-left: auto;
+}
+
+.admin-hint {
+  color: var(--text-muted);
+  font-size: 13px;
+  max-width: 700px;
+}
+
+.admin-add-form {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.admin-add-form input {
+  padding: 6px 8px;
+}
+
+.admin-search {
+  padding: 6px 8px;
+  margin-bottom: 8px;
+  width: 240px;
+}
+
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.admin-table th,
+.admin-table td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.admin-table td.truncate {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-table button {
+  margin-right: 6px;
+  font-size: 12px;
+}
+
+.admin-table button.danger {
+  color: #e03131;
+}
+
+input,
+button {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+button {
+  cursor: pointer;
+}

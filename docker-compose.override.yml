@@ -1,0 +1,28 @@
+# Automatically applied on top of docker-compose.yml for local development.
+# Exposes db/backend ports on the host and bind-mounts source for faster iteration.
+# Do not rely on this file in production deployments (remove or override it there).
+services:
+  db:
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+
+  backend:
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - ./backend/app:/app/app
+    command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"]
+
+  prober:
+    volumes:
+      - ./prober/app:/app/app
+
+  frontend:
+    build:
+      target: dev
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/index.html:/app/index.html
+    ports:
+      - "5173:5173"
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
