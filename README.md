@@ -11,7 +11,7 @@ and recent history.
 
 - **`db`** — Postgres, source of truth for targets, target lists, and trace history.
 - **`backend`** — FastAPI app: REST API, `/ws/tree` WebSocket push, server-side tree-merge computation, target-list URL sync, history retention/pruning, admin auth.
-- **`prober`** — Standalone worker that runs `mtr` against active targets on a self-throttling schedule (refresh cadence backs off automatically as the target count grows, so total probe traffic stays bounded) and reports results to `backend`.
+- **`prober`** — Standalone worker that runs Paris-consistent traces (`scamper`, or `mtr` as a fallback) against active targets on a self-throttling schedule (refresh cadence backs off automatically as the target count grows, so total probe traffic stays bounded) and reports results to `backend`.
 - **`frontend`** — React SPA (served via nginx, which also reverse-proxies `/api` and `/ws` to `backend`).
 
 See `docs/architecture.md` for the full design and `docs/ws-protocol.md` for the WebSocket message contract.
@@ -37,16 +37,20 @@ adds hot-reload + exposed `db`/`backend` ports for local development; drop it
 
 ### Sanity-checking the prober's raw-socket permissions
 
-`mtr`'s default ICMP mode needs `CAP_NET_RAW`, granted in `docker-compose.yml`
-without `--privileged`. Confirm it actually works on your Docker setup:
+The default prober method, `scamper`-based `icmp-paris`, needs `CAP_NET_RAW`
+plus `CAP_SYS_CHROOT`/`CAP_SETGID`/`CAP_SETUID` for its privilege-separation
+step (opens a raw socket as root, then chroots and drops to an unprivileged
+user) — all granted in `docker-compose.yml` without `--privileged`. Confirm
+it actually works on your Docker setup:
 
 ```bash
-docker compose exec prober mtr --report --json -c1 1.1.1.1
+docker compose exec prober scamper -O json -o - -I 'trace -P icmp-paris -q1 1.1.1.1'
 ```
 
-If that fails on your platform, switch `mtr` to UDP or TCP mode (`-u` / `-T`
-in `prober/app/mtr_runner.py`'s command line) — those modes use ordinary
-sockets and need no elevated capability at all.
+If that fails on your platform, set `PROBE_METHOD=udp-paris` or `tcp` (see
+`.env.example`) — TCP mode is the most likely to get through firewalls that
+block/deprioritize ICMP — or fall back to `PROBE_METHOD=mtr`, which only
+needs `CAP_NET_RAW`.
 
 ## Configuration
 

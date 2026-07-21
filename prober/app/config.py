@@ -20,6 +20,16 @@ class Settings(BaseSettings):
     mtr_max_hops: int = 30
     mtr_gracetime: int = 5
 
+    # Which tool/method probes a target. "mtr" is the legacy default-ICMP
+    # prober (no flow consistency, kept as a fallback); the others run
+    # scamper's Paris-traceroute-consistent trace, which pins each probe's
+    # flow identifier so ECMP load-balancers don't scatter one run's probes
+    # across multiple physical paths.
+    probe_method: str = "icmp-paris"  # "mtr" | "icmp-paris" | "udp-paris" | "tcp" | "tcp-ack"
+    scamper_probe_count: int = 10  # analogous to mtr_probe_count
+    scamper_probe_timeout_seconds: int = 1  # analogous to mtr_timeout_seconds
+    scamper_gap_limit: int = 5  # analogous to mtr_gracetime
+
     # Strip this container's own default-route gateway (e.g. the Docker
     # bridge) from every trace's hops -- it's an artifact of running mtr
     # from inside a container's network namespace, not a real hop past

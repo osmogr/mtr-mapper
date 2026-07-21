@@ -3,7 +3,7 @@ import logging
 import httpx
 
 from app.config import Settings
-from app.mtr_runner import TraceResult
+from app.models import TraceResult
 
 logger = logging.getLogger(__name__)
 

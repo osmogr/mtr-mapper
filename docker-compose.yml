@@ -35,6 +35,14 @@ services:
     env_file: .env
     cap_add:
       - NET_RAW
+      # scamper (used for Paris-consistent probing) opens its raw socket as
+      # root, then chroots to /var/empty and drops to an unprivileged user
+      # via its internal privilege-separation step -- these three are needed
+      # for that drop to succeed under cap_drop: ALL, confirmed empirically;
+      # NET_RAW alone (sufficient for mtr) leaves scamper failing at startup.
+      - SYS_CHROOT
+      - SETGID
+      - SETUID
     cap_drop:
       - ALL
     security_opt:

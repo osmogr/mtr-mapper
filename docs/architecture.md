@@ -3,7 +3,7 @@
 ## Services and data flow
 
 ```
-            ┌──────────┐   mtr subprocess    ┌────────────┐
+            ┌──────────┐   scamper/mtr       ┌────────────┐
             │ prober   │ ───────────────────▶ │ (network)  │
             │          │                      └────────────┘
             │  worker  │  GET  /api/prober/targets
@@ -35,7 +35,7 @@ time a target finishes a run). The achieved per-target cycle time is
 therefore approximately:
 
 ```
-max(PROBER_MIN_CYCLE_SECONDS, (active_targets / PROBER_CONCURRENCY) * avg_mtr_run_seconds)
+max(PROBER_MIN_CYCLE_SECONDS, (active_targets / PROBER_CONCURRENCY) * avg_probe_run_seconds)
 ```
 
 As the target count grows, the achieved interval grows with it automatically
@@ -44,6 +44,38 @@ traffic is bounded by concurrency, not by target count. The backend exposes
 the *achieved* average interval (derived from `targets.last_probed_at`
 deltas) via `GET /api/prober/stats` and the admin UI, so this is observable
 rather than just assumed.
+
+## Probe method: scamper (Paris-consistent) vs mtr
+
+`prober` shells out to either `mtr` or `scamper` per run, selected globally
+by `PROBE_METHOD` (`app/prober_strategy.py` picks the runner; `app/mtr_runner.py`
+and `app/scamper_runner.py` both produce the same `TraceResult`/`HopResult`
+shape consumed by `backend_client.py`, so nothing downstream — the API,
+schemas, ORM, or `tree_builder.py` — needs to know which tool ran).
+
+The default, `icmp-paris`, runs scamper's Paris-traceroute-consistent trace
+method instead of plain mtr. Plain ICMP mtr sends each probe with a fresh
+identifier, so a router doing ECMP load-balancing can hash successive probes
+onto different physical next-hops — observed in practice as phantom extra
+branches and multi-IP nodes (large `hop_ips` lists) at ECMP points in the
+merged tree, on top of the genuine same-hostname-different-IP cases
+`tree_builder.py`'s hostname merge already handles. scamper's Paris methods
+pin the flow identifier so every attempt in a run takes the same path;
+`-q <SCAMPER_PROBE_COUNT> -Q` still sends multiple attempts per hop for
+loss/RTT stats, matching mtr's `-c` behavior. `udp-paris`/`tcp`/`tcp-ack` are
+available as alternative methods (`PROBE_METHOD`) for networks that
+deprioritize ICMP; `mtr` itself remains selectable as a fallback.
+
+Unlike mtr's `--json`, scamper's `-O json` output only contains an entry for
+a `probe_ttl` that got at least one reply — `_parse_scamper_trace` walks
+`1..hop_count` and synthesizes a timeout `HopResult` for any gap, so the
+"real hop vs `*`" contract `tree_builder.py` depends on is preserved.
+
+scamper's raw-socket + privilege-separation model (opens its socket as root,
+then chroots to `/var/empty` and drops to an unprivileged user) needs
+`SYS_CHROOT`/`SETGID`/`SETUID` in addition to `NET_RAW` under the
+`cap_drop: ALL` prober container — confirmed empirically; `NET_RAW` alone
+(sufficient for mtr) leaves scamper failing at startup.
 
 ## Tree-merge algorithm
 

@@ -1,61 +1,13 @@
 import asyncio
 import json
 import logging
-import socket
-import struct
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from functools import lru_cache
 
 from app.config import Settings
+from app.gateway import detect_default_gateway
+from app.models import HopResult, TraceResult
 
 logger = logging.getLogger(__name__)
-
-
-@lru_cache(maxsize=1)
-def _detect_default_gateway() -> str | None:
-    """Best-effort detection of this container's own default-route gateway,
-    memoized since it can't change during the container's lifetime. Reads
-    /proc/net/route (Linux-only, fine since this always runs in a Linux
-    container); returns None -- disabling the filter -- if that's not
-    available or has no default route, rather than failing the probe.
-    """
-    try:
-        with open("/proc/net/route") as f:
-            for line in f.readlines()[1:]:
-                fields = line.split()
-                if len(fields) < 3 or fields[1] != "00000000":
-                    continue
-                return socket.inet_ntoa(struct.pack("<L", int(fields[2], 16)))
-    except Exception:
-        logger.warning("could not determine default gateway; not filtering any hop")
-    return None
-
-
-@dataclass
-class HopResult:
-    hop_number: int
-    hop_ip: str | None
-    hop_hostname: str | None
-    is_timeout: bool
-    sent: int | None
-    loss_pct: float | None
-    last_ms: float | None
-    avg_ms: float | None
-    best_ms: float | None
-    worst_ms: float | None
-    stddev_ms: float | None
-
-
-@dataclass
-class TraceResult:
-    target_id: int
-    started_at: datetime
-    completed_at: datetime
-    success: bool
-    error_message: str | None = None
-    raw_json: dict | None = None
-    hops: list[HopResult] = field(default_factory=list)
 
 
 def _parse_mtr_json(raw: dict, gateway_ip: str | None = None) -> list[HopResult]:
@@ -140,7 +92,7 @@ async def run_mtr(target_id: int, address: str, settings: Settings) -> TraceResu
             )
 
         raw = json.loads(stdout.decode(errors="replace"))
-        gateway_ip = _detect_default_gateway() if settings.filter_gateway_hop else None
+        gateway_ip = detect_default_gateway() if settings.filter_gateway_hop else None
         hops = _parse_mtr_json(raw, gateway_ip)
         return TraceResult(
             target_id=target_id,

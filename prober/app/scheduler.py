@@ -16,7 +16,7 @@ import time
 
 from app.backend_client import BackendClient
 from app.config import Settings
-from app.mtr_runner import run_mtr
+from app.prober_strategy import get_strategy
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +31,7 @@ class Scheduler:
         self._heap: list[tuple[float, int]] = []  # (eligible_at_monotonic, target_id)
         self._targets: dict[int, str] = {}  # target_id -> address, current active set
         self._queued: set[int] = set()  # target_ids currently sitting in the heap
+        self._strategy = get_strategy(settings)
 
     async def _refresh_targets_once(self) -> None:
         remote = await self._backend.get_targets()
@@ -87,7 +88,7 @@ class Scheduler:
                 await asyncio.sleep(_IDLE_POLL_SECONDS)
                 continue
             target_id, address = item
-            result = await run_mtr(target_id, address, self._settings)
+            result = await self._strategy(target_id, address, self._settings)
             try:
                 await self._backend.submit_result(result)
             except Exception:
