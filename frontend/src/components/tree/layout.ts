@@ -58,7 +58,7 @@ function aggregateFade(
   return { isCurrent, lastSeenAt };
 }
 
-const NODE_SPACING_ACROSS = 36; // px between sibling nodes (room for the ASN line below each label)
+const NODE_SPACING_ACROSS = 58; // px between sibling nodes (room for the label + ASN line stacked below each node)
 const NODE_SPACING_DEPTH = 220; // px between depth levels (room for a truncated FQDN label)
 
 /** Bottom-up count of *currently active* leaf targets under every node, from

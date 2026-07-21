@@ -17,6 +17,25 @@ This is a tree, not a DAG: once two targets' paths diverge they never
 re-converge into a shared node again even if a later hop happens to match.
 That's an accepted simplification -- real-world path reconvergence after
 divergence is rare and not worth the added complexity.
+
+One exception to "positional identity": an mtr hop that got zero replies
+across an entire run (`is_timeout`) is common noise from routers that
+deprioritize ICMP TTL-exceeded replies under load, not necessarily a real
+routing change -- so it does NOT always get its own "*" node, and a
+dropped hop also makes every later raw hop-number in that one trace
+unreliable relative to a trace that got a reply at that position (a
+timeout could be swallowing more than one physical hop). `build_tree` seeds
+the trie with every trace's real leading hop chain first, then, when a
+trace hits a timeout (or run of them), searches the *entire* already-known
+real subtree hanging off the last confirmed position for a node whose
+label matches the next hop this trace did get a reply from (see
+`_find_unambiguous_real_descendant`) -- not just its direct children. If
+exactly one such node exists, the timeout(s) are skipped entirely and the
+trace rejoins the known real path there, rather than forking a duplicate
+subtree. Only when no unambiguous match exists does a timeout get its own
+"*" node, same as before -- so this still can't reconverge genuinely
+diverged paths, it only resolves positional uncertainty within a path
+that's already shared.
 """
 
 from __future__ import annotations
@@ -51,6 +70,66 @@ def _lookup_asn(
     ip: str | None, asn_map: dict[str, tuple[int | None, str | None]]
 ) -> tuple[int | None, str | None]:
     return asn_map.get(ip, (None, None)) if ip else (None, None)
+
+
+def _find_unambiguous_real_descendant(node: "_BuildNode", label: str) -> "_BuildNode | None":
+    """Search every already-known real (non-timeout) descendant of `node`
+    for the one whose label matches, without trusting how many hops away it
+    actually is -- a hop timing out doesn't just hide its own identity, it
+    also makes every subsequent raw hop-number in that one trace off by an
+    unknowable amount relative to a trace that got a reply at that same
+    position. Scoped to `node`'s own subtree (never searches siblings or
+    unrelated branches), so this can't reconverge genuinely diverged paths
+    -- it only corrects for positional uncertainty on what's otherwise
+    already an established shared trunk. Timeout nodes and their descendants
+    are excluded from the search (bridging shouldn't chain through another
+    trace's own unresolved timeout). Returns None -- no bridge -- unless
+    exactly one descendant matches, so a coincidental same-label repeat
+    elsewhere in the subtree safely falls back to the old behavior instead
+    of risking a wrong merge.
+    """
+    matches: list[_BuildNode] = []
+
+    def visit(n: "_BuildNode") -> None:
+        for child in n.children.values():
+            if child.is_timeout_node:
+                continue
+            if (child.hop_hostname or child.hop_ip) == label:
+                matches.append(child)
+            visit(child)
+
+    visit(node)
+    return matches[0] if len(matches) == 1 else None
+
+
+def _get_or_create_real_child(
+    parent: "_BuildNode",
+    hop_ip: str,
+    hostname_map: dict[str, str | None],
+    asn_map: dict[str, tuple[int | None, str | None]],
+    all_nodes: dict[str, "_BuildNode"],
+) -> "_BuildNode":
+    hostname = hostname_map.get(hop_ip)
+    label = hostname or hop_ip
+    child = parent.children.get(label)
+    if child is None:
+        asn, as_org = _lookup_asn(hop_ip, asn_map)
+        child = _BuildNode(
+            id=_node_id(parent.id, label),
+            parent_id=parent.id,
+            depth=parent.depth + 1,
+            hop_ip=hop_ip,
+            hop_ips=[hop_ip],
+            hop_hostname=hostname,
+            asn=asn,
+            as_org=as_org,
+            is_timeout_node=False,
+        )
+        parent.children[label] = child
+        all_nodes[child.id] = child
+    elif hop_ip not in child.hop_ips:
+        child.hop_ips.append(hop_ip)
+    return child
 
 
 @dataclass
@@ -184,32 +263,78 @@ def build_tree(
     )
     all_nodes: dict[str, _BuildNode] = {root.id: root}
 
+    # First pass: seed the trie with every trace's leading run of real
+    # (non-timeout) hops, stopping at that trace's first timeout. Real-hop
+    # merging (by parent+label) is already order-independent on its own, so
+    # this pass' only purpose is making sure a responding hop's canonical
+    # node exists *before* the second pass below runs -- otherwise whichever
+    # trace happens to iterate first would decide, arbitrarily, whether a
+    # later trace's isolated timeout can rejoin the real path it belongs to.
     for trace in target_traces:
         current = root
         for hop in trace.hops:
+            if hop.is_timeout or not hop.hop_ip:
+                break
+            current = _get_or_create_real_child(current, hop.hop_ip, hostname_map, asn_map, all_nodes)
+
+    for trace in target_traces:
+        current = root
+        hops = trace.hops
+        i = 0
+        n = len(hops)
+        while i < n:
+            hop = hops[i]
             is_timeout = hop.is_timeout or not hop.hop_ip
-            hostname = None if is_timeout else hostname_map.get(hop.hop_ip)
-            label = "*" if is_timeout else (hostname or hop.hop_ip)
-            child = current.children.get(label)
-            if child is None:
-                asn, as_org = _lookup_asn(None if is_timeout else hop.hop_ip, asn_map)
-                child = _BuildNode(
-                    id=_node_id(current.id, label),
-                    parent_id=current.id,
-                    depth=current.depth + 1,
-                    hop_ip=None if is_timeout else hop.hop_ip,
-                    hop_ips=[] if is_timeout else [hop.hop_ip],
-                    hop_hostname=hostname,
-                    asn=asn,
-                    as_org=as_org,
-                    is_timeout_node=is_timeout,
-                )
-                current.children[label] = child
-                all_nodes[child.id] = child
-            elif not is_timeout and hop.hop_ip not in child.hop_ips:
-                child.hop_ips.append(hop.hop_ip)
-            child.contributions.append(hop.stat_dict())
-            current = child
+            if is_timeout:
+                # A router failing to reply to some TTL-exceeded probes while
+                # forwarding traffic fine is common and doesn't mean the path
+                # actually changed. If the next hop this trace *did* get a
+                # reply from already matches a real node some other trace
+                # reached on this same shared trunk (seeded above, or built
+                # by an earlier trace in this very pass), treat the run of
+                # timeout(s) as a probe artifact: skip them rather than
+                # forking a duplicate "*" subtree, and rejoin the known real
+                # path. This intentionally drops the timeout hop(s)' own
+                # loss stat from the tree in that case -- there's no node
+                # left to attach it to once the fork is elided.
+                j = i + 1
+                while j < n and (hops[j].is_timeout or not hops[j].hop_ip):
+                    j += 1
+                if j < n:
+                    next_hop = hops[j]
+                    label = hostname_map.get(next_hop.hop_ip) or next_hop.hop_ip
+                    rejoin = _find_unambiguous_real_descendant(current, label)
+                    if rejoin is not None:
+                        current = rejoin
+                        if next_hop.hop_ip not in current.hop_ips:
+                            current.hop_ips.append(next_hop.hop_ip)
+                        current.contributions.append(next_hop.stat_dict())
+                        i = j + 1
+                        continue
+
+                # No known real path to rejoin -- fall back to a real "*"
+                # node, merged with any other trace whose timeout landed on
+                # this same trie position.
+                child = current.children.get("*")
+                if child is None:
+                    child = _BuildNode(
+                        id=_node_id(current.id, "*"),
+                        parent_id=current.id,
+                        depth=current.depth + 1,
+                        hop_ip=None,
+                        hop_hostname=None,
+                        is_timeout_node=True,
+                    )
+                    current.children["*"] = child
+                    all_nodes[child.id] = child
+                child.contributions.append(hop.stat_dict())
+                current = child
+                i += 1
+                continue
+
+            current = _get_or_create_real_child(current, hop.hop_ip, hostname_map, asn_map, all_nodes)
+            current.contributions.append(hop.stat_dict())
+            i += 1
 
         last_hop = trace.hops[-1] if trace.hops else None
         leaf_ip = last_hop.hop_ip if last_hop and not last_hop.is_timeout else None

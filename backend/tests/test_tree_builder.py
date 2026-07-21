@@ -90,6 +90,145 @@ def test_timeout_after_divergence_does_not_merge():
     assert timeout_nodes[0].parent_id != timeout_nodes[1].parent_id
 
 
+def test_isolated_timeout_rejoins_known_real_path():
+    # Target 1 is a target address that's also the very first real hop for
+    # target 2's route (e.g. monitoring your own home router directly while
+    # other targets route through it). Target 2's trace happened to get zero
+    # replies at hop 1 in this run (common router ICMP-deprioritization
+    # noise) but hop 2 lands right back on the exact same node target 1
+    # reached directly -- this must merge into one node, not fork a
+    # duplicate "*" subtree.
+    traces = [
+        TargetTraceData(target_id=1, address="router.example.net", hops=[hop(1, "192.168.1.1")]),
+        TargetTraceData(
+            target_id=2,
+            address="b.example.com",
+            hops=[hop(1, timeout=True), hop(2, "192.168.1.1"), hop(3, "8.8.8.8")],
+        ),
+    ]
+    nodes = build_tree(traces, SETTINGS)
+
+    router_nodes = [n for n in nodes.values() if n.hop_ip == "192.168.1.1"]
+    assert len(router_nodes) == 1, "isolated timeout should rejoin the known real router node"
+    router = router_nodes[0]
+    assert nodes[router.parent_id].hop_ip is None  # direct child of root
+    assert router.is_leaf_target
+    assert router.target_ids == [1]
+    assert len(router.children) == 1
+    assert nodes[router.children[0]].hop_ip == "8.8.8.8"
+
+    assert not any(n.is_timeout_node for n in nodes.values()), "no '*' node should be created"
+
+
+def test_isolated_timeout_rejoin_is_order_independent():
+    # Same scenario as above, but with the trace containing the timeout
+    # listed *first* -- the merge must not depend on which trace happens to
+    # be processed first.
+    traces = [
+        TargetTraceData(
+            target_id=2,
+            address="b.example.com",
+            hops=[hop(1, timeout=True), hop(2, "192.168.1.1"), hop(3, "8.8.8.8")],
+        ),
+        TargetTraceData(target_id=1, address="router.example.net", hops=[hop(1, "192.168.1.1")]),
+    ]
+    nodes = build_tree(traces, SETTINGS)
+
+    router_nodes = [n for n in nodes.values() if n.hop_ip == "192.168.1.1"]
+    assert len(router_nodes) == 1, "merge must not depend on trace processing order"
+    assert not any(n.is_timeout_node for n in nodes.values())
+
+
+def test_multiple_consecutive_timeouts_rejoin_known_real_path():
+    traces = [
+        TargetTraceData(target_id=1, address="a.example.com", hops=[hop(1, "10.0.0.1"), hop(2, "1.1.1.1")]),
+        TargetTraceData(
+            target_id=2,
+            address="b.example.com",
+            hops=[hop(1, "10.0.0.1"), hop(2, timeout=True), hop(3, timeout=True), hop(4, "1.1.1.1")],
+        ),
+    ]
+    nodes = build_tree(traces, SETTINGS)
+
+    target_nodes = [n for n in nodes.values() if n.hop_ip == "1.1.1.1"]
+    assert len(target_nodes) == 1, "a whole run of consecutive timeouts should still rejoin"
+    assert set(target_nodes[0].target_ids) == {1, 2}
+    assert not any(n.is_timeout_node for n in nodes.values())
+
+
+def test_timeout_with_no_matching_downstream_path_still_forks():
+    # Without any independent real node to rejoin, an isolated timeout must
+    # still behave exactly as before -- creating its own "*" node.
+    traces = [
+        TargetTraceData(
+            target_id=1,
+            address="a.example.com",
+            hops=[hop(1, "10.0.0.1"), hop(2, timeout=True), hop(3, "1.1.1.1")],
+        ),
+    ]
+    nodes = build_tree(traces, SETTINGS)
+    timeout_nodes = [n for n in nodes.values() if n.is_timeout_node]
+    assert len(timeout_nodes) == 1
+
+
+def test_first_hop_timeout_rejoins_shared_trunk_several_levels_down():
+    # Real production case: a whole multi-hop shared trunk (router -> WAN
+    # gateway -> ISP core hops) gets duplicated wholesale whenever some
+    # target's *first* hop alone times out, even though every hop after it
+    # matches the known trunk exactly -- because the rejoin point is several
+    # trie levels below the last confirmed position, not just one.
+    traces = [
+        TargetTraceData(
+            target_id=1,
+            address="router.example.net",
+            hops=[hop(1, "192.168.1.1")],
+        ),
+        TargetTraceData(
+            target_id=2,
+            address="b.example.com",
+            hops=[
+                hop(1, timeout=True),
+                hop(2, "192.168.1.1"),
+                hop(3, "10.0.0.9"),
+                hop(4, "1.1.1.1"),
+            ],
+        ),
+    ]
+    nodes = build_tree(traces, SETTINGS)
+
+    for ip in ("192.168.1.1", "10.0.0.9"):
+        matches = [n for n in nodes.values() if n.hop_ip == ip]
+        assert len(matches) == 1, f"{ip} should collapse into a single node despite the deep timeout"
+    assert not any(n.is_timeout_node for n in nodes.values())
+
+
+def test_timeout_rejoin_declines_when_downstream_label_is_ambiguous():
+    # If the same label legitimately occurs twice in the shared subtree
+    # (e.g. two different branches happen to both pass through the same
+    # onward IP), bridging would be a guess -- must fall back to a real "*"
+    # node rather than risk merging into the wrong branch.
+    traces = [
+        TargetTraceData(
+            target_id=1,
+            address="a.example.com",
+            hops=[hop(1, "10.0.0.1"), hop(2, "9.9.9.9")],
+        ),
+        TargetTraceData(
+            target_id=2,
+            address="b.example.com",
+            hops=[hop(1, "10.0.0.2"), hop(2, "9.9.9.9")],
+        ),
+        TargetTraceData(
+            target_id=3,
+            address="c.example.com",
+            hops=[hop(1, timeout=True), hop(2, "9.9.9.9")],
+        ),
+    ]
+    nodes = build_tree(traces, SETTINGS)
+    timeout_nodes = [n for n in nodes.values() if n.is_timeout_node]
+    assert len(timeout_nodes) == 1, "ambiguous rejoin target should fall back to a '*' node"
+
+
 def test_same_ip_at_different_depth_not_merged():
     traces = [
         TargetTraceData(

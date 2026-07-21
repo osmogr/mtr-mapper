@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     prober_target_refresh_seconds: int = 30
     prober_run_timeout_seconds: int = 60
 
-    mtr_probe_count: int = 5
+    mtr_probe_count: int = 10
     mtr_probe_interval: int = 1
     mtr_timeout_seconds: int = 1
     mtr_max_hops: int = 30

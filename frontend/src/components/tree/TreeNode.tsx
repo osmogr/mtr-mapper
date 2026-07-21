@@ -75,12 +75,12 @@ function TreeNodeComponent({ x, y, node, isSummary, summarizedLeafCount, isSelec
           {summarizedLeafCount}
         </text>
       )}
-      <text x={radius + 6} dy="0.32em" fontSize={11} fill="var(--tree-label-color, #212529)">
+      <text x={0} y={radius + 13} textAnchor="middle" fontSize={11} fill="var(--tree-label-color, #212529)">
         {displayLabel}
         {displayLabel !== label && <title>{label}</title>}
       </text>
       {asnLabel && (
-        <text x={radius + 6} y={12} fontSize={9} fill="var(--text-muted, #868e96)">
+        <text x={0} y={radius + 25} textAnchor="middle" fontSize={9} fill="var(--text-muted, #868e96)">
           {asnLabel}
         </text>
       )}
