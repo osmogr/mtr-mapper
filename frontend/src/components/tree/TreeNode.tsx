@@ -20,9 +20,28 @@ interface Props {
 function labelFor(node: TreeNodeData | undefined, isSummary: boolean, count: number, target: Target | undefined): string {
   if (isSummary) return `${count} target${count === 1 ? "" : "s"}`;
   if (!node) return "";
-  if (node.is_leaf_target) return target?.display_name || target?.address || node.hop_ip || "target";
+  if (node.is_leaf_target) {
+    // A leaf-target node whose final hop actually responded (the common
+    // case) carries that hop's own resolved hostname -- prefer it over the
+    // target's raw configured address (e.g. show "dns.google" rather than
+    // the "8.8.8.8" the admin typed in), same preference order used for
+    // every other node's label. An explicit display_name still wins.
+    return target?.display_name || node.hop_hostname || target?.address || node.hop_ip || "target";
+  }
   if (node.is_timeout_node) return "*";
   return node.hop_hostname || node.hop_ip || "";
+}
+
+// Long FQDNs (e.g. "be-36421-cs02.losangeles.ca.ibone.comcast.net") otherwise
+// overlap the next depth column, since NODE_SPACING_DEPTH is fixed and can't
+// grow to fit every possible hostname without wasting space on the (much
+// more common) short IP/short-name labels. Truncate with an ellipsis and
+// rely on a native SVG tooltip for the full value.
+const MAX_LABEL_CHARS = 26;
+
+function truncateLabel(label: string): string {
+  if (label.length <= MAX_LABEL_CHARS) return label;
+  return `${label.slice(0, MAX_LABEL_CHARS - 1)}…`;
 }
 
 function TreeNodeComponent({ x, y, node, isSummary, summarizedLeafCount, isSelected, isRoot, opacity, target, onClick }: Props) {
@@ -31,6 +50,7 @@ function TreeNodeComponent({ x, y, node, isSummary, summarizedLeafCount, isSelec
   const color = isRoot ? "#495057" : SEVERITY_COLOR[isSummary ? worst : severity];
   const radius = isRoot ? 8 : isSummary ? 10 : node?.is_leaf_target ? 6 : 5;
   const label = isRoot ? "you" : labelFor(node, isSummary, summarizedLeafCount, target);
+  const displayLabel = truncateLabel(label);
   const asnLabel = !isSummary && node?.asn ? `AS${node.asn}` : null;
   const asnRingColor = !isSummary && node?.asn ? asnColorVar(node.asn) : null;
 
@@ -56,7 +76,8 @@ function TreeNodeComponent({ x, y, node, isSummary, summarizedLeafCount, isSelec
         </text>
       )}
       <text x={radius + 6} dy="0.32em" fontSize={11} fill="var(--tree-label-color, #212529)">
-        {label}
+        {displayLabel}
+        {displayLabel !== label && <title>{label}</title>}
       </text>
       {asnLabel && (
         <text x={radius + 6} y={12} fontSize={9} fill="var(--text-muted, #868e96)">

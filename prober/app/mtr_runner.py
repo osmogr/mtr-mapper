@@ -1,12 +1,35 @@
 import asyncio
 import json
 import logging
+import socket
+import struct
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from functools import lru_cache
 
 from app.config import Settings
 
 logger = logging.getLogger(__name__)
+
+
+@lru_cache(maxsize=1)
+def _detect_default_gateway() -> str | None:
+    """Best-effort detection of this container's own default-route gateway,
+    memoized since it can't change during the container's lifetime. Reads
+    /proc/net/route (Linux-only, fine since this always runs in a Linux
+    container); returns None -- disabling the filter -- if that's not
+    available or has no default route, rather than failing the probe.
+    """
+    try:
+        with open("/proc/net/route") as f:
+            for line in f.readlines()[1:]:
+                fields = line.split()
+                if len(fields) < 3 or fields[1] != "00000000":
+                    continue
+                return socket.inet_ntoa(struct.pack("<L", int(fields[2], 16)))
+    except Exception:
+        logger.warning("could not determine default gateway; not filtering any hop")
+    return None
 
 
 @dataclass
@@ -35,16 +58,23 @@ class TraceResult:
     hops: list[HopResult] = field(default_factory=list)
 
 
-def _parse_mtr_json(raw: dict) -> list[HopResult]:
+def _parse_mtr_json(raw: dict, gateway_ip: str | None = None) -> list[HopResult]:
     hubs = raw.get("report", {}).get("hubs", [])
     hops: list[HopResult] = []
     for hub in hubs:
         host = hub.get("host")
         is_timeout = host is None or host == "???"
+        ip = None if is_timeout else str(host)
+        if gateway_ip and ip == gateway_ip:
+            # This container's own default-route gateway -- not a real hop
+            # past this host, so it's dropped rather than stored. Hops are
+            # renumbered sequentially below rather than trusting mtr's own
+            # `count` field, so dropping one never leaves a gap.
+            continue
         hops.append(
             HopResult(
-                hop_number=int(hub.get("count", len(hops) + 1)),
-                hop_ip=None if is_timeout else str(host),
+                hop_number=len(hops) + 1,
+                hop_ip=ip,
                 hop_hostname=None,  # --no-dns: mtr never resolves; resolved lazily by the backend
                 is_timeout=is_timeout,
                 sent=hub.get("Snt"),
@@ -110,7 +140,8 @@ async def run_mtr(target_id: int, address: str, settings: Settings) -> TraceResu
             )
 
         raw = json.loads(stdout.decode(errors="replace"))
-        hops = _parse_mtr_json(raw)
+        gateway_ip = _detect_default_gateway() if settings.filter_gateway_hop else None
+        hops = _parse_mtr_json(raw, gateway_ip)
         return TraceResult(
             target_id=target_id,
             started_at=started_at,

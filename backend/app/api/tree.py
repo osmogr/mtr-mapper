@@ -2,8 +2,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import cast, select
-from sqlalchemy.dialects.postgresql import INET
+from sqlalchemy import String, cast, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -13,7 +12,6 @@ from app.models.trace import TraceHop
 from app.schemas.target import HopHistoryPoint, TargetHistory, TargetOut
 from app.schemas.tree import NodeDetail, NodeHistory, NodeHistoryPoint, TreeSnapshotMessage
 from app.services import tree_builder
-from app.services.dns_cache import resolve_hostname
 from app.services.tree_service import tree_service
 
 router = APIRouter(prefix="/api", tags=["public"])
@@ -144,10 +142,7 @@ async def get_node(node_id: str) -> NodeDetail:
     node = await tree_service.get_node(node_id)
     if node is None:
         raise HTTPException(status_code=404, detail="node not found")
-    resolved = None
-    if node.hop_ip:
-        resolved = node.hop_hostname or await resolve_hostname(node.hop_ip)
-    return NodeDetail(node=node, resolved_hostname=resolved)
+    return NodeDetail(node=node)
 
 
 @router.get("/nodes/{node_id}/history", response_model=NodeHistory)
@@ -185,16 +180,23 @@ async def get_node_history(
             )
         return NodeHistory(node_id=node_id, points=points)
 
-    if not node.hop_ip:
+    node_ips = node.hop_ips or ([node.hop_ip] if node.hop_ip else [])
+    if not node_ips:
         return NodeHistory(node_id=node_id, points=[])
 
     # Trunk/shared-hop node: approximate its history as all recorded hops (across
-    # any target) at that IP within the window, aggregated per timestamp. This is
-    # a reasonable approximation of "this shared hop's health over time" even
-    # though strict trie membership is (parent, label), not IP alone.
+    # any target) at any of the node's contributing IPs within the window,
+    # aggregated per timestamp. A node can now cover more than one IP (hostname-
+    # based merging collapses same-hostname IPs into one node), so this queries
+    # all of them, not just the primary/first-seen one. This is a reasonable
+    # approximation of "this shared hop's health over time" even though strict
+    # trie membership is (parent, label), not IP alone.
     hops_result = await db.execute(
         select(TraceHop)
-        .where(TraceHop.hop_ip == cast(node.hop_ip, INET), TraceHop.run_started_at >= cutoff)
+        .where(
+            cast(TraceHop.hop_ip, String).in_(node_ips),
+            TraceHop.run_started_at >= cutoff,
+        )
         .order_by(TraceHop.run_started_at.asc())
     )
     by_time: dict = defaultdict(list)

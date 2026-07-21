@@ -96,6 +96,7 @@ class _BuildNode:
     asn: int | None = None
     as_org: str | None = None
     is_leaf_target: bool = False
+    hop_ips: list[str] = field(default_factory=list)
     target_ids: list[int] = field(default_factory=list)
     children: dict[str, "_BuildNode"] = field(default_factory=dict)
     contributions: list[dict] = field(default_factory=list)
@@ -151,6 +152,7 @@ def _to_tree_node(node: _BuildNode) -> TreeNode:
         parent_id=node.parent_id,
         depth=node.depth,
         hop_ip=node.hop_ip,
+        hop_ips=node.hop_ips,
         hop_hostname=node.hop_hostname,
         asn=node.asn,
         as_org=node.as_org,
@@ -168,8 +170,10 @@ def build_tree(
     target_traces: list[TargetTraceData],
     settings: Settings,
     asn_map: dict[str, tuple[int | None, str | None]] | None = None,
+    hostname_map: dict[str, str | None] | None = None,
 ) -> dict[str, TreeNode]:
     asn_map = asn_map or {}
+    hostname_map = hostname_map or {}
     root = _BuildNode(
         id=ROOT_ID,
         parent_id=None,
@@ -184,7 +188,8 @@ def build_tree(
         current = root
         for hop in trace.hops:
             is_timeout = hop.is_timeout or not hop.hop_ip
-            label = "*" if is_timeout else hop.hop_ip
+            hostname = None if is_timeout else hostname_map.get(hop.hop_ip)
+            label = "*" if is_timeout else (hostname or hop.hop_ip)
             child = current.children.get(label)
             if child is None:
                 asn, as_org = _lookup_asn(None if is_timeout else hop.hop_ip, asn_map)
@@ -193,39 +198,56 @@ def build_tree(
                     parent_id=current.id,
                     depth=current.depth + 1,
                     hop_ip=None if is_timeout else hop.hop_ip,
-                    hop_hostname=None if is_timeout else hop.hop_hostname,
+                    hop_ips=[] if is_timeout else [hop.hop_ip],
+                    hop_hostname=hostname,
                     asn=asn,
                     as_org=as_org,
                     is_timeout_node=is_timeout,
                 )
                 current.children[label] = child
                 all_nodes[child.id] = child
-            elif hop.hop_hostname and not child.hop_hostname:
-                child.hop_hostname = hop.hop_hostname
+            elif not is_timeout and hop.hop_ip not in child.hop_ips:
+                child.hop_ips.append(hop.hop_ip)
             child.contributions.append(hop.stat_dict())
             current = child
 
-        leaf_label = f"target:{trace.target_id}"
         last_hop = trace.hops[-1] if trace.hops else None
-        leaf_asn, leaf_as_org = _lookup_asn(
-            last_hop.hop_ip if last_hop and not last_hop.is_timeout else None, asn_map
-        )
-        leaf = _BuildNode(
-            id=_node_id(current.id, leaf_label),
-            parent_id=current.id,
-            depth=current.depth + 1,
-            hop_ip=last_hop.hop_ip if last_hop and not last_hop.is_timeout else None,
-            hop_hostname=last_hop.hop_hostname if last_hop else None,
-            asn=leaf_asn,
-            as_org=leaf_as_org,
-            is_timeout_node=False,
-            is_leaf_target=True,
-            target_ids=[trace.target_id],
-        )
-        if last_hop:
-            leaf.contributions.append(last_hop.stat_dict())
-        current.children[leaf_label] = leaf
-        all_nodes[leaf.id] = leaf
+        leaf_ip = last_hop.hop_ip if last_hop and not last_hop.is_timeout else None
+
+        if leaf_ip is not None:
+            # `current` already IS the node for this final hop -- the loop
+            # above just finished processing it, including merging it with
+            # any other target that shares the same trie position (whether
+            # by identical IP or, via hostname_map, a different IP that
+            # resolves to the same name). Fold the "destination reached"
+            # marker onto it directly instead of adding a redundant sibling
+            # carrying the identical IP/hostname, which is what produced a
+            # visually duplicated pair (e.g. "dns.google" -> "8.8.8.8" for
+            # the exact same physical endpoint) whenever the destination
+            # actually responds -- the common/success case. A trace that
+            # ends in a timeout has no real final-hop node to fold onto, so
+            # it keeps the separate synthetic leaf below.
+            current.is_leaf_target = True
+            if trace.target_id not in current.target_ids:
+                current.target_ids.append(trace.target_id)
+        else:
+            leaf_label = f"target:{trace.target_id}"
+            leaf = _BuildNode(
+                id=_node_id(current.id, leaf_label),
+                parent_id=current.id,
+                depth=current.depth + 1,
+                hop_ip=None,
+                hop_hostname=None,
+                asn=None,
+                as_org=None,
+                is_timeout_node=False,
+                is_leaf_target=True,
+                target_ids=[trace.target_id],
+            )
+            if last_hop:
+                leaf.contributions.append(last_hop.stat_dict())
+            current.children[leaf_label] = leaf
+            all_nodes[leaf.id] = leaf
 
     _finalize(root, settings)
 

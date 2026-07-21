@@ -20,6 +20,12 @@ class Settings(BaseSettings):
     mtr_max_hops: int = 30
     mtr_gracetime: int = 5
 
+    # Strip this container's own default-route gateway (e.g. the Docker
+    # bridge) from every trace's hops -- it's an artifact of running mtr
+    # from inside a container's network namespace, not a real hop past
+    # this host.
+    filter_gateway_hop: bool = True
+
 
 @lru_cache
 def get_settings() -> Settings:

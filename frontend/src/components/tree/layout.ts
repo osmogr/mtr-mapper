@@ -59,7 +59,7 @@ function aggregateFade(
 }
 
 const NODE_SPACING_ACROSS = 36; // px between sibling nodes (room for the ASN line below each label)
-const NODE_SPACING_DEPTH = 190; // px between depth levels
+const NODE_SPACING_DEPTH = 220; // px between depth levels (room for a truncated FQDN label)
 
 /** Bottom-up count of *currently active* leaf targets under every node, from
  * the full node set (not just the visible/collapsed one) -- used both to
@@ -67,7 +67,18 @@ const NODE_SPACING_DEPTH = 190; // px between depth levels
  * targets". A rerouted path leaves its old leaf node around as a fading
  * ghost (see path-fade feature) with the same target_id as its new, current
  * leaf -- that's the same target, not an additional one, so stale leaves
- * count as 0 here rather than double-counting history as more targets. */
+ * count as 0 here rather than double-counting history as more targets.
+ *
+ * A node whose final real hop responds (the common case) has its
+ * "destination reached" marker folded directly onto that hop's own node
+ * (see `tree_builder.build_tree`'s fold) rather than getting a separate
+ * child leaf, and two targets with an identical full path (e.g. via a
+ * hostname alias merging two different IPs) fold onto the very same node --
+ * so a single is_leaf_target node can carry more than one target_id, and
+ * can still have real children of its own (if some other target happens to
+ * pass through it on the way further). Count `target_ids.length` rather
+ * than a flat 1, and keep descending into children instead of always
+ * stopping at is_leaf_target, so both cases are counted correctly. */
 export function computeLeafCounts(
   nodes: Record<string, TreeNode>,
   rootId: string,
@@ -78,11 +89,7 @@ export function computeLeafCounts(
     if (counts[id] !== undefined) return counts[id];
     const node = nodes[id];
     if (!node) return 0;
-    if (node.is_leaf_target) {
-      counts[id] = node.is_current ? 1 : 0;
-      return counts[id];
-    }
-    let sum = 0;
+    let sum = node.is_leaf_target && node.is_current ? node.target_ids.length : 0;
     for (const childId of childrenByParentId[id] ?? []) sum += visit(childId);
     counts[id] = sum;
     return sum;

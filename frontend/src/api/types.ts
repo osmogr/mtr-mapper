@@ -14,6 +14,7 @@ export interface TreeNode {
   parent_id: string | null;
   depth: number;
   hop_ip: string | null;
+  hop_ips: string[];
   hop_hostname: string | null;
   asn: number | null;
   as_org: string | null;
@@ -39,6 +40,8 @@ export interface NodeStatsUpdate {
   own_stats: NodeStats;
   severity: Severity;
   worst_descendant_severity: Severity;
+  hop_hostname: string | null;
+  hop_ips: string[];
   asn: number | null;
   as_org: string | null;
   is_current: boolean;
@@ -113,7 +116,6 @@ export interface NodeHistory {
 
 export interface NodeDetail {
   node: TreeNode;
-  resolved_hostname: string | null;
 }
 
 export interface ProberStats {

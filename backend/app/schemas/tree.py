@@ -20,6 +20,7 @@ class TreeNode(BaseModel):
     parent_id: str | None
     depth: int
     hop_ip: str | None
+    hop_ips: list[str] = []
     hop_hostname: str | None
     asn: int | None = None
     as_org: str | None = None
@@ -45,6 +46,8 @@ class NodeStatsUpdate(BaseModel):
     own_stats: NodeStats
     severity: Severity
     worst_descendant_severity: Severity
+    hop_hostname: str | None = None
+    hop_ips: list[str] = []
     asn: int | None = None
     as_org: str | None = None
     is_current: bool = True
@@ -61,7 +64,6 @@ class TreeDiffMessage(BaseModel):
 
 class NodeDetail(BaseModel):
     node: TreeNode
-    resolved_hostname: str | None = None
 
 
 class NodeHistoryPoint(BaseModel):

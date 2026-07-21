@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { api } from "../../api/client";
-import type { NodeDetail, NodeHistoryPoint } from "../../api/types";
+import type { NodeHistoryPoint } from "../../api/types";
 import { useTreeStore } from "../../hooks/useTreeStore";
 import HistoryChart from "./HistoryChart";
 import { formatLoss, formatMs, SEVERITY_COLOR } from "./severity";
@@ -24,24 +24,19 @@ function formatRelativeTime(iso: string): string {
 export default function DetailPanel({ nodeId, onClose }: Props) {
   const node = useTreeStore((s) => s.nodes[nodeId]);
   const targetsById = useTreeStore((s) => s.targetsById);
-  const [detail, setDetail] = useState<NodeDetail | null>(null);
   const [history, setHistory] = useState<NodeHistoryPoint[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    Promise.all([api.nodeDetail(nodeId), api.nodeHistory(nodeId, 24)])
-      .then(([d, h]) => {
-        if (cancelled) return;
-        setDetail(d);
-        setHistory(h.points);
+    api
+      .nodeHistory(nodeId, 24)
+      .then((h) => {
+        if (!cancelled) setHistory(h.points);
       })
       .catch(() => {
-        if (!cancelled) {
-          setDetail(null);
-          setHistory([]);
-        }
+        if (!cancelled) setHistory([]);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -62,7 +57,7 @@ export default function DetailPanel({ nodeId, onClose }: Props) {
     );
   }
 
-  const hostname = detail?.resolved_hostname ?? node.hop_hostname;
+  const hostname = node.hop_hostname;
   const targets = node.target_ids.map((id) => targetsById[id]).filter(Boolean);
 
   return (
@@ -72,7 +67,7 @@ export default function DetailPanel({ nodeId, onClose }: Props) {
       </button>
       <h3>
         {node.is_leaf_target
-          ? targets[0]?.display_name || targets[0]?.address || "Target"
+          ? targets[0]?.display_name || hostname || targets[0]?.address || "Target"
           : node.is_timeout_node
             ? "Unresponsive hop (*)"
             : hostname || node.hop_ip || "Hop"}
@@ -96,8 +91,8 @@ export default function DetailPanel({ nodeId, onClose }: Props) {
         )}
         {node.hop_ip && (
           <>
-            <dt>IP</dt>
-            <dd>{node.hop_ip}</dd>
+            <dt>IP{node.hop_ips.length > 1 ? "s" : ""}</dt>
+            <dd>{node.hop_ips.length > 1 ? node.hop_ips.join(", ") : node.hop_ip}</dd>
           </>
         )}
         {hostname && (

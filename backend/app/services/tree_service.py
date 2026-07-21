@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.config import Settings
 from app.schemas.tree import NodeStatsUpdate, TreeDiffMessage, TreeNode, TreeSnapshotMessage
-from app.services import asn_lookup, tree_builder
+from app.services import asn_lookup, hostname_lookup, tree_builder
 from app.services.ws_manager import ConnectionManager
 
 logger = logging.getLogger(__name__)
@@ -31,7 +31,8 @@ class TreeService:
             traces = await tree_builder.load_target_traces(session)
             hop_ips = {h.hop_ip for t in traces for h in t.hops if h.hop_ip}
             asn_map = await asn_lookup.get_asn_map(session, hop_ips, settings)
-        current_nodes = tree_builder.build_tree(traces, settings, asn_map)
+            hostname_map = await hostname_lookup.get_hostname_map(session, hop_ips, settings)
+        current_nodes = tree_builder.build_tree(traces, settings, asn_map, hostname_map)
         now = datetime.now(timezone.utc)
         fade_window = timedelta(hours=settings.path_fade_hours)
 
@@ -66,6 +67,7 @@ class TreeService:
                     or old.severity != n.severity
                     or old.worst_descendant_severity != n.worst_descendant_severity
                     or old.hop_hostname != n.hop_hostname
+                    or old.hop_ips != n.hop_ips
                     or old.asn != n.asn
                     or old.as_org != n.as_org
                     or old.is_current != n.is_current
@@ -76,6 +78,8 @@ class TreeService:
                             own_stats=n.own_stats,
                             severity=n.severity,
                             worst_descendant_severity=n.worst_descendant_severity,
+                            hop_hostname=n.hop_hostname,
+                            hop_ips=n.hop_ips,
                             asn=n.asn,
                             as_org=n.as_org,
                             is_current=n.is_current,

@@ -55,6 +55,8 @@ export const useTreeStore = create<TreeState>((set, get) => ({
           own_stats: u.own_stats,
           severity: u.severity,
           worst_descendant_severity: u.worst_descendant_severity,
+          hop_hostname: u.hop_hostname,
+          hop_ips: u.hop_ips,
           asn: u.asn,
           as_org: u.as_org,
           is_current: u.is_current,

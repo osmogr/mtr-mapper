@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     asn_lookup_timeout_seconds: float = 2.0
     asn_cache_ttl_hours: int = 24
 
+    hostname_lookup_enabled: bool = True
+    hostname_lookup_timeout_seconds: float = 2.0
+    hostname_cache_ttl_hours: int = 24
+
     path_fade_hours: float = 24.0
 
     cors_allowed_origins: str = "http://localhost:8080"
